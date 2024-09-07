@@ -16,11 +16,15 @@ enum EnginePacketType {
 	NOOP
 }
 
+enum State {
+	CONNECTED,
+	DISCONNECTED
+}
+
 signal conncetion_opened()
 signal conncetion_closed()
 signal message_received(data: String)
 signal transport_upgraded()
-
 
 const ENGINE_VERSION: int = 4
 
@@ -29,11 +33,13 @@ const ENGINE_VERSION: int = 4
 @export var path: String = "/engine.io"
 
 var session_id: String = ""
+var state: State = State.DISCONNECTED
 
 var _websocket: WebSocketPeer
 var _polling_http_request: HTTPRequest
 var _pong_http_request: HTTPRequest
 var _send_data_http_request: HTTPRequest
+var _close_http_request: HTTPRequest
 var _send_data_quee: Array[String] = []
 var _pong_http_request_in_process = false
 var _polling_http_request_in_process = false
@@ -43,9 +49,10 @@ var _ping_interval: int = 0
 var _pong_timeout: int = 0
 var _max_payload: int = 0
 
+
 func _ready():
 	if autoconnect:
-		_connect()
+		make_connection()
 
 
 func _process(_delta):
@@ -53,8 +60,8 @@ func _process(_delta):
 		return
 	
 	_websocket.poll()
-	var state := _websocket.get_ready_state()
-	if state == WebSocketPeer.STATE_OPEN:
+	var _socket_state := _websocket.get_ready_state()
+	if _socket_state == WebSocketPeer.STATE_OPEN:
 		if not _probe_sent:
 			_websocket.send_text("%sprobe" % str(EnginePacketType.PING))
 			_probe_sent = true
@@ -63,11 +70,17 @@ func _process(_delta):
 			var packets = _websocket.get_packet().get_string_from_utf8()
 			if not packets.is_empty():
 				_parse_packet(packets)
-	elif state == WebSocketPeer.STATE_CLOSED:
-		push_error("WebSocket connection closed code = %s, reason = %s" % [_websocket.get_close_code(), _websocket.get_close_reason()])
-
-
+	elif _socket_state == WebSocketPeer.STATE_CLOSED:
+		# TODO: reconnect if needed
+		state = State.DISCONNECTED
+		close()
+			
+		
 func send(data: String):
+	if state == State.DISCONNECTED:
+		push_error("Connection has not established yet, make sure to call make_connection() before sending data or set autoconnect to true")
+		return
+
 	if _transport_type == TransportType.WEBSOCKET:
 		_websocket.send_text("%s%s" % [str(EnginePacketType.MESSAGE), data])
 		return
@@ -82,11 +95,60 @@ func send(data: String):
 		_send_data()
 
 
-func _connect():
+func make_connection():
+	if state == State.CONNECTED:
+		push_error("Connection has already established")
+		return
+
 	_polling_http_request = HTTPRequest.new()
 	add_child(_polling_http_request)
 	_polling_http_request.request_completed.connect(self._polling_http_completed)
 	_handshake()
+
+
+func close():
+	if _transport_type == TransportType.WEBSOCKET:
+		if state == State.CONNECTED: _websocket.send_text(str(EnginePacketType.CLOSE))
+		_websocket.close()
+		
+	else:
+		if _polling_http_request:
+			_polling_http_request.cancel_request()
+			remove_child(_polling_http_request)
+
+		if _pong_http_request:
+			_pong_http_request.cancel_request()
+			remove_child(_pong_http_request)
+
+		if _send_data_http_request:
+			_send_data_http_request.cancel_request()
+			remove_child(_send_data_http_request)
+
+		if state == State.CONNECTED:
+			_close_http_request = HTTPRequest.new()
+			add_child(_close_http_request)
+			_close_http_request.request_completed.connect(_close_http_completed)
+			_close_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, str(EnginePacketType.CLOSE))
+
+	conncetion_closed.emit()
+	_clear_values()
+
+
+func _clear_values():
+	session_id = ""
+	state = State.DISCONNECTED
+	_websocket = null
+	_polling_http_request = null
+	_pong_http_request = null
+	_send_data_http_request = null
+	_send_data_quee.clear()
+	_pong_http_request_in_process = false
+	_polling_http_request_in_process = false
+	_probe_sent = false
+	_transport_type = TransportType.POLLING
+	_ping_interval = 0
+	_pong_timeout = 0
+	_max_payload = 0
 
 
 func _parse_packet(data: String):
@@ -96,7 +158,8 @@ func _parse_packet(data: String):
 			EnginePacketType.OPEN:
 				_on_open(message)
 			EnginePacketType.CLOSE:
-				print("CLOSE\n")
+				state = State.DISCONNECTED
+				close()
 			EnginePacketType.PING:
 				_on_ping()
 			EnginePacketType.PONG:
@@ -113,6 +176,10 @@ func _handshake():
 	var error: int = _polling_http_request.request(_get_url())
 	if error != OK:
 		push_error("An error occurred in HTTP request for EngineIO handshake, error code = %d" % error)
+
+
+func _close_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+	remove_child(_close_http_request)
 
 
 func _polling_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
@@ -143,10 +210,10 @@ func _send_data_http_completed(result: HTTPRequest.Result, response_code: int, h
 
 
 func _upgrade_transport():
+	transport_upgraded.emit()
 	_polling_http_request.cancel_request()
 	if _pong_http_request: _pong_http_request.cancel_request()
 	_websocket = WebSocketPeer.new()
-	print(_get_url())
 	_websocket.connect_to_url(_get_url())
 
 
@@ -162,6 +229,9 @@ func _on_open(body: String = ""):
 		return
 
 
+	state = State.CONNECTED
+	conncetion_opened.emit()
+
 	session_id = json.data["sid"]
 	_ping_interval = json.data["pingInterval"]
 	_pong_timeout = json.data["pingTimeout"]
@@ -170,14 +240,11 @@ func _on_open(body: String = ""):
 		_transport_type = TransportType.WEBSOCKET
 		_upgrade_transport()
 	else:
-		# wait for 2 seconds
-		await get_tree().create_timer(2.0).timeout
 		_transport_type = TransportType.POLLING
 		_poll()
 
 
 func _on_ping():
-	print("PING")
 	if _transport_type == TransportType.WEBSOCKET:
 		_websocket.send_text(str(EnginePacketType.PONG))
 		return
@@ -186,13 +253,12 @@ func _on_ping():
 
 
 func _on_pong():
-	print("PONG\n")
 	_websocket.send_text(str(EnginePacketType.UPGRADE))
 	_transport_type = TransportType.WEBSOCKET
 
 
 func _on_message(body: String = ""):
-	print("MESSAGE = %s" % body)
+	message_received.emit(body)
 	_poll()
 
 
