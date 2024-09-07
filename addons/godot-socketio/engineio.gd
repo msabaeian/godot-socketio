@@ -29,7 +29,7 @@ signal transport_upgraded()
 const ENGINE_VERSION: int = 4
 
 @export var autoconnect: bool = true
-@export var base_url: String = "localhost"
+@export var base_url: String = "http://localhost"
 @export var path: String = "/engine.io"
 
 var session_id: String = ""
@@ -40,7 +40,7 @@ var _polling_http_request: HTTPRequest
 var _pong_http_request: HTTPRequest
 var _send_data_http_request: HTTPRequest
 var _close_http_request: HTTPRequest
-var _send_data_quee: Array[String] = []
+var _send_data_queue: Array[String] = []
 var _pong_http_request_in_process = false
 var _polling_http_request_in_process = false
 var _probe_sent = false
@@ -90,8 +90,8 @@ func send(data: String):
 		_send_data_http_request.request_completed.connect(self._send_data_http_completed)
 		add_child(_send_data_http_request)
 		
-	_send_data_quee.append(data)
-	if _send_data_quee.size() == 1:
+	_send_data_queue.append(data)
+	if _send_data_queue.size() == 1:
 		_send_data()
 
 
@@ -141,7 +141,7 @@ func _clear_values():
 	_polling_http_request = null
 	_pong_http_request = null
 	_send_data_http_request = null
-	_send_data_quee.clear()
+	_send_data_queue.clear()
 	_pong_http_request_in_process = false
 	_polling_http_request_in_process = false
 	_probe_sent = false
@@ -201,20 +201,20 @@ func _pong_http_completed(result: HTTPRequest.Result, response_code: int, header
 
 func _send_data_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
 	if result == HTTPRequest.Result.RESULT_SUCCESS and response_code == 200:
-		_send_data_quee.pop_front()
+		_send_data_queue.pop_front()
 
-		if _send_data_quee.size() > 0:
+		if _send_data_queue.size() > 0:
 			_send_data()
 	else:
 		push_error("An error occurred in HTTP response of EngineIO for sending data, response code = %d, response body = %s" % [response_code, body.get_string_from_utf8()])
 
 
 func _upgrade_transport():
-	transport_upgraded.emit()
 	_polling_http_request.cancel_request()
 	if _pong_http_request: _pong_http_request.cancel_request()
 	_websocket = WebSocketPeer.new()
 	_websocket.connect_to_url(_get_url())
+	transport_upgraded.emit()
 
 
 func _on_open(body: String = ""):
@@ -230,7 +230,6 @@ func _on_open(body: String = ""):
 
 
 	state = State.CONNECTED
-	conncetion_opened.emit()
 
 	session_id = json.data["sid"]
 	_ping_interval = json.data["pingInterval"]
@@ -241,8 +240,9 @@ func _on_open(body: String = ""):
 		_upgrade_transport()
 	else:
 		_transport_type = TransportType.POLLING
+		conncetion_opened.emit()
 		_poll()
-
+	
 
 func _on_ping():
 	if _transport_type == TransportType.WEBSOCKET:
@@ -255,6 +255,7 @@ func _on_ping():
 func _on_pong():
 	_websocket.send_text(str(EnginePacketType.UPGRADE))
 	_transport_type = TransportType.WEBSOCKET
+	conncetion_opened.emit()
 
 
 func _on_message(body: String = ""):
@@ -267,7 +268,7 @@ func _on_noop():
 
 
 func _poll():
-	if not _transport_type == TransportType.POLLING or _polling_http_request_in_process:
+	if not state == State.DISCONNECTED or not _transport_type == TransportType.POLLING or _polling_http_request_in_process:
 		return
 
 	_polling_http_request_in_process = true
@@ -283,7 +284,7 @@ func _send_ping():
 
 
 func _send_http_pong():
-	if _pong_http_request_in_process:
+	if not state == State.CONNECTED or _pong_http_request_in_process:
 		return
 
 	if _pong_http_request == null:
@@ -298,7 +299,10 @@ func _send_http_pong():
 
 
 func _send_data():
-	_send_data_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, "%s%s" % [str(EnginePacketType.MESSAGE), _send_data_quee[0]])
+	if not state == State.CONNECTED:
+		return
+
+	_send_data_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, "%s%s" % [str(EnginePacketType.MESSAGE), _send_data_queue[0]])
 
 
 func _convert_http_to_ws(url: String) -> String:
