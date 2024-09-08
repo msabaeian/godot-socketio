@@ -13,7 +13,8 @@ enum EnginePacketType {
 	PONG,
 	MESSAGE,
 	UPGRADE,
-	NOOP
+	NOOP,
+	OK # only for pong response
 }
 
 enum State {
@@ -36,13 +37,10 @@ var session_id: String = ""
 var state: State = State.DISCONNECTED
 
 var _websocket: WebSocketPeer
-var _polling_http_request: HTTPRequest
-var _pong_http_request: HTTPRequest
-var _send_data_http_request: HTTPRequest
-var _close_http_request: HTTPRequest
+var _polling_http_request: Request
+var _send_data_http_request: Request
+var _close_http_request: Request
 var _send_data_queue: Array[String] = []
-var _pong_http_request_in_process = false
-var _polling_http_request_in_process = false
 var _probe_sent = false
 var _transport_type: TransportType = TransportType.POLLING
 var _ping_interval: int = 0
@@ -58,7 +56,7 @@ func _ready():
 func _process(_delta):
 	if not _transport_type == TransportType.WEBSOCKET:
 		return
-	
+
 	_websocket.poll()
 	var _socket_state := _websocket.get_ready_state()
 	if _socket_state == WebSocketPeer.STATE_OPEN:
@@ -84,15 +82,10 @@ func send(data: String):
 	if _transport_type == TransportType.WEBSOCKET:
 		_websocket.send_text("%s%s" % [str(EnginePacketType.MESSAGE), data])
 		return
-	
-	if _send_data_http_request == null:
-		_send_data_http_request = HTTPRequest.new()
-		_send_data_http_request.request_completed.connect(self._send_data_http_completed)
-		add_child(_send_data_http_request)
 		
 	_send_data_queue.append(data)
 	if _send_data_queue.size() == 1:
-		_send_data()
+		_http_send_data()
 
 
 func make_connection():
@@ -100,9 +93,11 @@ func make_connection():
 		push_error("Connection has already established")
 		return
 
-	_polling_http_request = HTTPRequest.new()
-	add_child(_polling_http_request)
-	_polling_http_request.request_completed.connect(self._polling_http_completed)
+	if _polling_http_request == null:
+		_polling_http_request = Request.new()
+		add_child(_polling_http_request)
+		_polling_http_request.on_response_received.connect(_parse_packet)
+	
 	_handshake()
 
 
@@ -112,23 +107,13 @@ func close():
 		_websocket.close()
 		
 	else:
-		if _polling_http_request:
-			_polling_http_request.cancel_request()
-			remove_child(_polling_http_request)
-
-		if _pong_http_request:
-			_pong_http_request.cancel_request()
-			remove_child(_pong_http_request)
-
-		if _send_data_http_request:
-			_send_data_http_request.cancel_request()
-			remove_child(_send_data_http_request)
+		_clear_requests()
 
 		if state == State.CONNECTED:
-			_close_http_request = HTTPRequest.new()
+			_close_http_request = Request.new()
 			add_child(_close_http_request)
-			_close_http_request.request_completed.connect(_close_http_completed)
-			_close_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, str(EnginePacketType.CLOSE))
+			_close_http_request.on_response_received.connect(_close_http_completed)
+			_close_http_request.request_post(_get_url(), str(EnginePacketType.CLOSE))
 
 	conncetion_closed.emit()
 	_clear_values()
@@ -138,12 +123,8 @@ func _clear_values():
 	session_id = ""
 	state = State.DISCONNECTED
 	_websocket = null
-	_polling_http_request = null
-	_pong_http_request = null
-	_send_data_http_request = null
+	_clear_requests()
 	_send_data_queue.clear()
-	_pong_http_request_in_process = false
-	_polling_http_request_in_process = false
 	_probe_sent = false
 	_transport_type = TransportType.POLLING
 	_ping_interval = 0
@@ -168,50 +149,27 @@ func _parse_packet(data: String):
 				_on_message(message.substr(1))
 			EnginePacketType.NOOP:
 				_on_noop()
+			EnginePacketType.OK:
+				_poll()
 			_:
 				push_error("unknown packet type in EngineIO, payload" % data)
 
 
 func _handshake():
-	var error: int = _polling_http_request.request(_get_url())
-	if error != OK:
-		push_error("An error occurred in HTTP request for EngineIO handshake, error code = %d" % error)
+	_polling_http_request.request_get(_get_url())
 
 
-func _close_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
-	remove_child(_close_http_request)
+func _close_http_completed(_response: String):
+	_close_http_request.clear()
 
 
-func _polling_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
-	_polling_http_request_in_process = false
-	if result == HTTPRequest.Result.RESULT_SUCCESS and response_code == 200:
-		_parse_packet(body.get_string_from_utf8())
-	else:
-		push_error("An error occurred in HTTP response of EngineIO, response code = %d, response body = %s" % [response_code, body.get_string_from_utf8()])
-
-
-func _pong_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
-	_pong_http_request_in_process = false
-
-	if not result == HTTPRequest.Result.RESULT_SUCCESS or not response_code == 200:
-		push_error("An error occurred in HTTP response of EngineIO for pong, response code = %d, response body = %s" % [response_code, body.get_string_from_utf8()])
-	else:
-		_poll()
-
-
-func _send_data_http_completed(result: HTTPRequest.Result, response_code: int, headers: PackedStringArray, body: PackedByteArray):
-	if result == HTTPRequest.Result.RESULT_SUCCESS and response_code == 200:
-		_send_data_queue.pop_front()
-
-		if _send_data_queue.size() > 0:
-			_send_data()
-	else:
-		push_error("An error occurred in HTTP response of EngineIO for sending data, response code = %d, response body = %s" % [response_code, body.get_string_from_utf8()])
-
+func _send_data_response(response: String):
+	_send_data_queue.pop_front()
+	if _send_data_queue.size() > 0:
+		_http_send_data()
 
 func _upgrade_transport():
-	_polling_http_request.cancel_request()
-	if _pong_http_request: _pong_http_request.cancel_request()
+	_clear_requests()
 	_websocket = WebSocketPeer.new()
 	_websocket.connect_to_url(_get_url())
 	transport_upgraded.emit()
@@ -249,7 +207,7 @@ func _on_ping():
 		_websocket.send_text(str(EnginePacketType.PONG))
 		return
 
-	_send_http_pong()
+	_polling_http_request.request_post(_get_url(), str(EnginePacketType.PONG))
 
 
 func _on_pong():
@@ -268,13 +226,9 @@ func _on_noop():
 
 
 func _poll():
-	if not state == State.DISCONNECTED or not _transport_type == TransportType.POLLING or _polling_http_request_in_process:
+	if not state == State.CONNECTED or not _transport_type == TransportType.POLLING:
 		return
-
-	_polling_http_request_in_process = true
-	var error: int = _polling_http_request.request(_get_url())
-	if error != OK:
-		push_error("An error occurred in HTTP request for polling, error code = %d" % error, "\n")
+	_polling_http_request.request_get(_get_url())
 
 
 func _send_ping():
@@ -283,26 +237,16 @@ func _send_ping():
 		push_error("An error occurred in HTTP request for EngineIO ping, error code = %d" % error, "\n")
 
 
-func _send_http_pong():
-	if not state == State.CONNECTED or _pong_http_request_in_process:
-		return
-
-	if _pong_http_request == null:
-		_pong_http_request = HTTPRequest.new()
-		add_child(_pong_http_request)
-		_pong_http_request.request_completed.connect(self._pong_http_completed)
-
-	_pong_http_request_in_process = true
-	var error: int = _pong_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, str(EnginePacketType.PONG))
-	if error != OK:
-		push_error("An error occurred in HTTP request for EngineIO pong, error code = %d" % error, "\n")
-
-
-func _send_data():
+func _http_send_data():
 	if not state == State.CONNECTED:
 		return
 
-	_send_data_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, "%s%s" % [str(EnginePacketType.MESSAGE), _send_data_queue[0]])
+	if _send_data_http_request == null:
+		_send_data_http_request = Request.new()
+		_send_data_http_request.on_response_received.connect(self._send_data_response)
+		add_child(_send_data_http_request)
+
+	_send_data_http_request.request_post(_get_url(), "%s%s" % [str(EnginePacketType.MESSAGE), _send_data_queue[0]])
 
 
 func _convert_http_to_ws(url: String) -> String:
@@ -332,4 +276,12 @@ func _get_packet_type(data: String) -> EnginePacketType:
 	if data.is_empty():
 		return -1
 
+	if data == "ok":
+		return EnginePacketType.OK
+
 	return int(data[0]) as EnginePacketType
+
+func _clear_requests():
+	for request in [_polling_http_request, _send_data_http_request]:
+		if not request == null:
+			request.clear()
