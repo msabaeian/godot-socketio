@@ -3,7 +3,7 @@ extends EditorPlugin
 
 
 func _enter_tree() -> void:
-	add_custom_type("SocketIO", "Node", preload("res://addons/godot-socketio/engineio.gd"), preload("res://addons/godot-socketio/logo.svg"))
+	add_custom_type("SocketIO", "Node", preload("res://addons/godot-socketio/socketio.gd"), preload("res://addons/godot-socketio/logo.svg"))
 
 
 func _exit_tree() -> void:

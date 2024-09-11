@@ -61,7 +61,7 @@ func _process(_delta):
 	var _socket_state := _websocket.get_ready_state()
 	if _socket_state == WebSocketPeer.STATE_OPEN:
 		if not _probe_sent:
-			_websocket.send_text("%sprobe" % str(EnginePacketType.PING))
+			_websocket_send(EnginePacketType.PING, "probe")
 			_probe_sent = true
 
 		while _websocket.get_available_packet_count():
@@ -80,9 +80,9 @@ func send(data: String):
 		return
 
 	if _transport_type == TransportType.WEBSOCKET:
-		_websocket.send_text("%s%s" % [str(EnginePacketType.MESSAGE), data])
+		_websocket_send(EnginePacketType.MESSAGE, data)
 		return
-		
+
 	_send_data_queue.append(data)
 	if _send_data_queue.size() == 1:
 		_http_send_data()
@@ -103,7 +103,8 @@ func make_connection():
 
 func close():
 	if _transport_type == TransportType.WEBSOCKET:
-		if state == State.CONNECTED: _websocket.send_text(str(EnginePacketType.CLOSE))
+		if state == State.CONNECTED:
+			_websocket_send(EnginePacketType.CLOSE)
 		_websocket.close()
 		
 	else:
@@ -204,14 +205,14 @@ func _on_open(body: String = ""):
 
 func _on_ping():
 	if _transport_type == TransportType.WEBSOCKET:
-		_websocket.send_text(str(EnginePacketType.PONG))
+		_websocket_send(EnginePacketType.PONG)
 		return
 
 	_polling_http_request.request_post(_get_url(), str(EnginePacketType.PONG))
 
 
 func _on_pong():
-	_websocket.send_text(str(EnginePacketType.UPGRADE))
+	_websocket_send(EnginePacketType.UPGRADE)
 	_transport_type = TransportType.WEBSOCKET
 	conncetion_opened.emit()
 
@@ -285,3 +286,6 @@ func _clear_requests():
 	for request in [_polling_http_request, _send_data_http_request]:
 		if not request == null:
 			request.clear()
+
+func _websocket_send(type: EnginePacketType, payload: String = ""):
+	_websocket.send_text("%s%s" % [type, payload])
