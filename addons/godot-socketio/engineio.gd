@@ -22,10 +22,11 @@ enum State {
 	DISCONNECTED
 }
 
-signal conncetion_opened()
-signal conncetion_closed()
-signal message_received(data: String)
-signal transport_upgraded()
+# to avoid missunderstanding/missusage, the engine signals have been prefixed with "engine_" to distinguish them from the socket.io signals
+signal engine_conncetion_opened()
+signal engine_conncetion_closed()
+signal engine_message_received(data: String)
+signal engine_transport_upgraded()
 
 const ENGINE_VERSION: int = 4
 
@@ -50,7 +51,7 @@ var _max_payload: int = 0
 
 func _ready():
 	if autoconnect:
-		make_connection()
+		engine_make_connection()
 
 
 func _process(_delta):
@@ -71,12 +72,12 @@ func _process(_delta):
 	elif _socket_state == WebSocketPeer.STATE_CLOSED:
 		# TODO: reconnect if needed
 		state = State.DISCONNECTED
-		close()
+		engine_close()
 			
 		
-func send(data: String):
+func engine_send(data: String):
 	if state == State.DISCONNECTED:
-		push_error("Connection has not established yet, make sure to call make_connection() before sending data or set autoconnect to true")
+		push_error("Connection has not established yet, make sure to call engine_make_connection() before sending data or set autoconnect to true")
 		return
 
 	if _transport_type == TransportType.WEBSOCKET:
@@ -88,7 +89,7 @@ func send(data: String):
 		_http_send_data()
 
 
-func make_connection():
+func engine_make_connection():
 	if state == State.CONNECTED:
 		push_error("Connection has already established")
 		return
@@ -101,7 +102,7 @@ func make_connection():
 	_handshake()
 
 
-func close():
+func engine_close():
 	if _transport_type == TransportType.WEBSOCKET:
 		if state == State.CONNECTED:
 			_websocket_send(EnginePacketType.CLOSE)
@@ -116,7 +117,7 @@ func close():
 			_close_http_request.on_response_received.connect(_close_http_completed)
 			_close_http_request.request_post(_get_url(), str(EnginePacketType.CLOSE))
 
-	conncetion_closed.emit()
+	engine_conncetion_closed.emit()
 	_clear_values()
 
 
@@ -141,7 +142,7 @@ func _parse_packet(data: String):
 				_on_open(message)
 			EnginePacketType.CLOSE:
 				state = State.DISCONNECTED
-				close()
+				engine_close()
 			EnginePacketType.PING:
 				_on_ping()
 			EnginePacketType.PONG:
@@ -169,22 +170,23 @@ func _send_data_response(response: String):
 	if _send_data_queue.size() > 0:
 		_http_send_data()
 
+
 func _upgrade_transport():
 	_clear_requests()
 	_websocket = WebSocketPeer.new()
 	_websocket.connect_to_url(_get_url())
-	transport_upgraded.emit()
+	engine_transport_upgraded.emit()
 
 
 func _on_open(body: String = ""):
 	if body.is_empty():
-		push_error("An error occurred in decoding socket packet, body is empty", "\n")
+		push_error("An error occurred in decoding socket packet, body is empty")
 		return null
 		
 	var json = JSON.new()
 	var error = json.parse(body.substr(1))
 	if error != OK:
-		push_error("An error occurred in decoding socket packet" + json.get_error_message(), "\n")
+		push_error("An error occurred in decoding socket packet" + json.get_error_message())
 		return
 
 
@@ -199,7 +201,7 @@ func _on_open(body: String = ""):
 		_upgrade_transport()
 	else:
 		_transport_type = TransportType.POLLING
-		conncetion_opened.emit()
+		engine_conncetion_opened.emit()
 		_poll()
 	
 
@@ -214,16 +216,16 @@ func _on_ping():
 func _on_pong():
 	_websocket_send(EnginePacketType.UPGRADE)
 	_transport_type = TransportType.WEBSOCKET
-	conncetion_opened.emit()
+	engine_conncetion_opened.emit()
 
 
 func _on_message(body: String = ""):
-	message_received.emit(body)
+	engine_message_received.emit(body)
 	_poll()
 
 
 func _on_noop():
-	print("NOOP\n")
+	push_error("NOOP received which is not handled yet")
 
 
 func _poll():
@@ -235,7 +237,7 @@ func _poll():
 func _send_ping():
 	var error: int = _polling_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, str(EnginePacketType.PING))
 	if error != OK:
-		push_error("An error occurred in HTTP request for EngineIO ping, error code = %d" % error, "\n")
+		push_error("An error occurred in HTTP request for EngineIO ping, error code = %d" % error)
 
 
 func _http_send_data():
@@ -282,10 +284,12 @@ func _get_packet_type(data: String) -> EnginePacketType:
 
 	return int(data[0]) as EnginePacketType
 
+
 func _clear_requests():
 	for request in [_polling_http_request, _send_data_http_request]:
 		if not request == null:
 			request.clear()
+
 
 func _websocket_send(type: EnginePacketType, payload: String = ""):
 	_websocket.send_text("%s%s" % [type, payload])
