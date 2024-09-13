@@ -36,10 +36,6 @@ func _on_event_received(event: String, data: Variant, ns: String) -> void:
 
 ## Todo:
 
-#### repo
-
-- Add example (Godot project and NodeJS server)
-
 #### Socket.IO
 
 - emit with [acknowledgement](https://github.com/socketio/socket.io/blob/main/docs/socket.io-protocol/v5-current.md#acknowledgement-1), [sample](https://socket.io/docs/v4/client-api/#socketemitwithackeventname-args)
