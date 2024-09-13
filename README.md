@@ -1,6 +1,6 @@
 # Socket.IO Godot Client
 
-This is the Socket.IO and Engine.IO Client addon for [Godot](https://godotengine.org/) written in [GDScript](https://gdscript.com/) that supports both polling and Websocket.
+This is a [Socket.IO](https://socket.io/) and [Engine.IO](https://socket.io/docs/v4/engine-io-protocol/) Client addon for [Godot](https://godotengine.org/) written in [GDScript](https://gdscript.com/) that supports both polling and Websocket.
 
 > This is still a work in progress and is not yet fully featured. Please make sure to check out the #todo section before using it. The current implementation is functional and works, but there are some known cases that have not been implemented or covered yet, not to mention unknown issues that may arise
 
@@ -30,8 +30,8 @@ func func _on_socket_connected() -> void:
     client.emit("hello")
     client.emit("some_event", { "value": 10 })
 
-func _on_event_received(event: String, data: Variant):
-    print("%s with %s received" % [event, data])
+func _on_event_received(event: String, data: Variant, ns: String) -> void:
+    print("event %s with %s as data received" % [event, data])
 ```
 
 ## Todo:
@@ -42,7 +42,6 @@ func _on_event_received(event: String, data: Variant):
 
 #### Socket.IO
 
-- [auth support](https://socket.io/docs/v4/client-options/#auth)
 - emit with [acknowledgement](https://github.com/socketio/socket.io/blob/main/docs/socket.io-protocol/v5-current.md#acknowledgement-1), [sample](https://socket.io/docs/v4/client-api/#socketemitwithackeventname-args)
 - connect to Websocket only (disable polling)
 
