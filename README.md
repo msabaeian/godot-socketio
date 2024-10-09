@@ -16,7 +16,7 @@ This is a [Socket.IO](https://socket.io/) and [Engine.IO](https://socket.io/docs
 
 Add the Socket.IO node to your tree and fill out the parameters in the Inspector, connect the signals via code or IDE, and use it.
 
-```py
+```gdscript
 @onready var client: SocketIO = $SocketIO
 
 func _ready() -> void:
@@ -26,7 +26,7 @@ func _ready() -> void:
 func _on_connect_pressed() -> void:
     client.make_connection()
 
-func func _on_socket_connected() -> void:
+func _on_socket_connected() -> void:
     client.emit("hello")
     client.emit("some_event", { "value": 10 })
 
