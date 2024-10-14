@@ -24,7 +24,7 @@ func _ready() -> void:
     client.event_received.connect(_on_event_received)
 
 func _on_connect_pressed() -> void:
-    client.make_connection()
+    client.connect_socket()
 
 func _on_socket_connected() -> void:
     client.emit("hello")
