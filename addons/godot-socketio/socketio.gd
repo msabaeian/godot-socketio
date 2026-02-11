@@ -178,7 +178,7 @@ func _on_namespace_disconnected(ns: String, data: Variant):
 func _on_namespace_connect_error(ns: String, data: Variant):
 	if _namespace_exists(ns):
 		_namespaces[ns].state = State.DISCONNECTED
-		namespace_connection_error.emit()
+		namespace_connection_error.emit(ns, data)
 		push_error("namespace connection error", data)
 
 func _on_event(ns: String, data: Array):
