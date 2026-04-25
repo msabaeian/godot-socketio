@@ -11,39 +11,60 @@ script = ExtResource("1_gxu47")
 autoconnect = false
 base_url = "http://localhost:3000"
 
+[node name="BaseUrlInput" type="LineEdit" parent="."]
+offset_left = 59.0
+offset_top = 20.0
+offset_right = 340.0
+offset_bottom = 51.0
+placeholder_text = "http://localhost:3000"
+
+[node name="PathInput" type="LineEdit" parent="."]
+offset_left = 59.0
+offset_top = 58.0
+offset_right = 340.0
+offset_bottom = 89.0
+placeholder_text = "/socket.io"
+
+[node name="TokenInput" type="LineEdit" parent="."]
+offset_left = 59.0
+offset_top = 96.0
+offset_right = 340.0
+offset_bottom = 127.0
+placeholder_text = "auth token (optional)"
+
 [node name="Connect" type="Button" parent="."]
 offset_left = 59.0
-offset_top = 32.0
+offset_top = 140.0
 offset_right = 340.0
-offset_bottom = 109.0
+offset_bottom = 217.0
 text = "Connect to server"
 
 [node name="ConnectNamespace" type="Button" parent="."]
 offset_left = 432.0
-offset_top = 32.0
+offset_top = 140.0
 offset_right = 713.0
-offset_bottom = 109.0
+offset_bottom = 217.0
 text = "Connect to /admin"
 
 [node name="EmitInAdmin" type="Button" parent="."]
 offset_left = 432.0
-offset_top = 151.0
+offset_top = 259.0
 offset_right = 713.0
-offset_bottom = 228.0
+offset_bottom = 336.0
 text = "Emit event in /admin"
 
 [node name="EmitSimple" type="Button" parent="."]
 offset_left = 59.0
-offset_top = 147.0
+offset_top = 255.0
 offset_right = 340.0
-offset_bottom = 224.0
+offset_bottom = 332.0
 text = "Emit simple event"
 
 [node name="EmitSearch" type="Button" parent="."]
 offset_left = 59.0
-offset_top = 265.0
+offset_top = 373.0
 offset_right = 340.0
-offset_bottom = 342.0
+offset_bottom = 450.0
 text = "Emit search event"
 
 [node name="LogLabel" type="Label" parent="."]
@@ -51,9 +72,9 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 19.0
-offset_top = 422.0
+offset_top = 530.0
 offset_right = 571.0
-offset_bottom = 638.0
+offset_bottom = 746.0
 grow_vertical = 0
 text = "Events from server log:"
 
