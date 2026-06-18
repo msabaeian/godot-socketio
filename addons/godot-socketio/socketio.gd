@@ -148,7 +148,6 @@ func disconnect_socket():
 		disconnect_namespace(ns)
 	
 	engine_close()
-	socket_disconnected.emit()
 
 
 func _on_engine_io_connection_closed():
@@ -156,6 +155,9 @@ func _on_engine_io_connection_closed():
 
 
 func _on_engine_io_connection_opened():
+	for ns in _namespaces:
+		_namespaces[ns].state = State.DISCONNECTED
+		_namespaces[ns].sid = ""
 	connect_to_namespace(default_namespace, _namespaces[default_namespace].auth)
 
 

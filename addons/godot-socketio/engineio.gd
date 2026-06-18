@@ -27,15 +27,19 @@ signal engine_connection_opened()
 signal engine_connection_closed()
 signal engine_message_received(data: String)
 signal engine_transport_upgraded()
+signal reconnection_attempted(attempt: int, max: int)
 
 const ENGINE_VERSION: int = 4
 
 @export var autoconnect: bool = true
 @export var base_url: String = "http://localhost"
 @export var path: String = "/engine.io"
+@export var auto_reconnect: bool = true
+@export var max_reconnect_attempts: int = 5
+@export var reconnect_base_delay_seconds: float = 1.0
 
 var session_id: String = ""
-var state: State = State.DISCONNECTED
+var state := State.DISCONNECTED
 
 var _websocket: WebSocketPeer
 var _polling_http_request: Request
@@ -43,10 +47,11 @@ var _send_data_http_request: Request
 var _close_http_request: Request
 var _send_data_queue: Array[String] = []
 var _probe_sent = false
-var _transport_type: TransportType = TransportType.POLLING
+var _transport_type = TransportType.POLLING
 var _ping_interval: int = 0
 var _pong_timeout: int = 0
 var _max_payload: int = 0
+var _reconnect_attempts: int = 0
 
 
 func _ready():
@@ -70,9 +75,22 @@ func _process(_delta):
 			if not packets.is_empty():
 				_parse_packet(packets)
 	elif _socket_state == WebSocketPeer.STATE_CLOSED:
-		# TODO: reconnect if needed
-		state = State.DISCONNECTED
-		engine_close()
+		if auto_reconnect and _reconnect_attempts < max_reconnect_attempts:
+			_reconnect_attempts += 1
+			_clear_values()
+			_polling_http_request = null
+			_send_data_http_request = null
+			var t := Timer.new()
+			t.wait_time = reconnect_base_delay_seconds * _reconnect_attempts
+			t.one_shot = true
+			t.timeout.connect(_emit_reconnection_attempted)
+			t.timeout.connect(engine_make_connection)
+			t.timeout.connect(t.queue_free)
+			add_child(t)
+			t.start()
+		else:
+			_reconnect_attempts = 0
+			engine_close()
 			
 		
 func engine_send(data: String):
@@ -132,7 +150,10 @@ func _clear_values():
 	_ping_interval = 0
 	_pong_timeout = 0
 	_max_payload = 0
+	_reconnect_attempts = 0
 
+func _emit_reconnection_attempted():
+	reconnection_attempted.emit(_reconnect_attempts, max_reconnect_attempts)
 
 func _parse_packet(data: String):
 	var messages := data.split("")
@@ -142,11 +163,14 @@ func _parse_packet(data: String):
 				_on_open(message)
 			EnginePacketType.CLOSE:
 				state = State.DISCONNECTED
-				engine_close()
+				if _transport_type == TransportType.WEBSOCKET:
+					_websocket.close()
+				else:
+					engine_close()
 			EnginePacketType.PING:
 				_on_ping()
 			EnginePacketType.PONG:
-				_on_pong()
+				_on_pong(message.substr(1))
 			EnginePacketType.MESSAGE:
 				_on_message(message.substr(1))
 			EnginePacketType.NOOP:
@@ -201,6 +225,7 @@ func _on_open(body: String = ""):
 		_upgrade_transport()
 	else:
 		_transport_type = TransportType.POLLING
+		_reconnect_attempts = 0
 		engine_connection_opened.emit()
 		_poll()
 	
@@ -213,9 +238,13 @@ func _on_ping():
 	_polling_http_request.request_post(_get_url(), str(EnginePacketType.PONG))
 
 
-func _on_pong():
+func _on_pong(payload: String = ""):
+	if payload != "probe":
+		push_warning("Received unexpected pong with payload: %s" % payload)
+		return
 	_websocket_send(EnginePacketType.UPGRADE)
 	_transport_type = TransportType.WEBSOCKET
+	_reconnect_attempts = 0
 	engine_connection_opened.emit()
 
 
@@ -225,19 +254,13 @@ func _on_message(body: String = ""):
 
 
 func _on_noop():
-	push_error("NOOP received which is not handled yet")
+	_poll()
 
 
 func _poll():
 	if not state == State.CONNECTED or not _transport_type == TransportType.POLLING:
 		return
 	_polling_http_request.request_get(_get_url())
-
-
-func _send_ping():
-	var error: int = _polling_http_request.request(_get_url(), [], HTTPClient.METHOD_POST, str(EnginePacketType.PING))
-	if error != OK:
-		push_error("An error occurred in HTTP request for EngineIO ping, error code = %d" % error)
 
 
 func _http_send_data():
